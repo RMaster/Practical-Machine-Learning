@@ -1,0 +1,211 @@
+---
+title: "Prediction of manner of exercise"
+author: "Trupti Palande"
+date: "Wednesday, May 20, 2015"
+output: html_document
+---
+
+The objective of this analysis is to predict the manner in which six participants did the exercise. The goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+### Steps followed for prediction
+
+1.  Read in the data-set from testing and training(test case) files.
+2.  Preprocess the data-sets to remove unnecessary columns which are not needed in analysis.
+3.	Create training, and testing data-set from the training file.
+4.	Evaluate the best algorithm to use by incrementally trying out rPart(Recursive              
+Partitioning and Regression Trees),Random Forest,generalized boosted regression models, parallel Random Forest and compare the out error for all algorithms.
+5.	Choose the best algorithm from step 5 and use it make prediction for the 20 
+test cases.
+    
+## Loading Training Data
+The pml-training.csv data is used to devise training and testing sets during fitting of the model. The pml-testing.csv data is used to submit 20 test cases based on the fitted model.
+
+##Pre-Processing
+
+```{r, results='hide'}
+
+# load require libraries
+library(caret)
+library(doParallel)
+library(rattle)
+
+train   <- read.csv('pml-training.csv', na.strings=c("NA","#DIV/0!", ""))
+test       <- read.csv('pml-test.csv' , na.strings=c("NA", "#DIV/0!", ""))
+```
+
+We have training and testing data sets. The training data have 19622 records with 160 variables including classe class variable, while the test data set has 20 records.
+Classe response variable had 5 distinct values and the distribution of the values in percentage of the total values are as follows:
+
+```{r}
+table(train$classe)/nrow(train) * 100
+```
+
+From above its clear that classe A frequency Higher than any other Classe variable. first 5 columns were just subject details and time-stamp information so that needs to be removed. Remove columns having more than 60% N/A's value which are not helpful for the prediction. They were removed from the analysis by the followng command.
+
+```{r}
+# remove columns having more than 60% N/A's value
+goodVars    <- which((colSums(!is.na(train)) >= 0.6*nrow(train)))
+train <- train[,goodVars]
+test     <- test[,goodVars]
+
+# remove problem id
+test <- test[-ncol(test)]
+
+# fix factor levels
+test$new_window <- factor(test$new_window, levels=c("no","yes"))
+
+#Remove Row No and Time stamp column
+train <- train[,-c(1,5)]
+test     <- test[,-c(1,5)]
+
+```
+##Data Splitting
+
+ The training data-set was split into training and testing data with split percentage of 60%. We take approximately 60% of the data as the training data, and 40% as the cross validation.The training data-set was later split into 10-fold Cross-validation through train function.
+ 
+```{r}
+partTrain  <- createDataPartition(train$classe, p = 0.6, list = FALSE)
+train1<-train[partTrain,]
+test1<-train[-partTrain,] 
+```
+
+##Training and testing function
+Following Methods are evaluated for performance and accuracy
+
+###Method 1 : Recursive Partitioning and Regression Trees Model
+
+ rPart with 10-fold cross validation was used. The model was trained using train function with all default values.
+
+```{r, results='hide'}
+
+set.seed(4)
+rPartModel <- train(classe ~ ., data=train1, method="rpart", trControl=trainControl(method="cv"))
+```
+
+```{r}
+fancyRpartPlot(rPartModel$finalModel)
+```
+ From tree output it is observed tnat other than the first leaf which is pure all the other leaves are not pure and there is not even a leaf with the label D.
+
+```{r, results='hide'}
+rPartTrainPred <- predict(rPartModel, newdata=train1)
+rPartTestPred <- predict(rPartModel, newdata=test1)
+trainingConfusion <- confusionMatrix(train1$classe, rPartTrainPred)
+trainingConfusion$overall[1]  # Accuracy : 0.4982167
+testingConfusion <- confusionMatrix(test1$classe, rPartTestPred)
+testingConfusion$overall[1]   # Accuracy : 0.4936273
+```
+```{r}
+print(testingConfusion$table)
+```
+
+From the table above, it can be see that rPart predicted 50% of values in activity A, B and C correctly and it was 0% accurate for activity D. The in-sample error accuracy was 49.82% and out of sample error accuracy was 49.36%
+
+###Method 2 : random forest model
+
+Now moved on to random forest model which was more slower algorithm than rPart but more powerful. Again 10-fold cross validation was used with default options.
+
+```{r , results='hide'}
+set.seed(40)
+rfModel <- train(classe ~ ., data=train1, method="rf", trControl=trainControl(method="cv"))
+```
+
+```{r}
+  plot(rfModel$finalModel, main="")
+```
+
+from the plot above it is observed that random forest used accuracy to select the optimal solution of 28 trees.
+
+```{r , results='hide'}
+rfTrainPred <- predict(rfModel, newdata=train1)
+rfTestPred <- predict(rfModel, newdata=test1)
+rfTrainingConfusion <- confusionMatrix(train1$classe, rfTrainPred)
+rfTrainingConfusion$overall[1] #Accuracy :1
+rfTestingConfusion <- confusionMatrix(test1$classe, rfTestPred)
+rfTestingConfusion$overall[1]  #Accuracy :0.9983431
+```
+```{r}
+  print(testingConfusion$table)
+```
+
+There was only one error in the testing data so the in-sample error accuracy is 100% and out-sample error accuracy 99.83% which huge improvement. The algorithm performed near perfect on the testing data. If the out-error and in-error difference was huge we could have said that the algorithm was over fitting but as the difference is marginal this means algorithm is not over fitting and also we used k-fold cross validation to reduce over fitting. The only problem is that the algorithm took around more time than for rPart which is taking too long. 
+
+###Method 3 : Generalized Boosted Regression Modeling
+
+The results from random forest were highly accurate but in an attempt to reduce the time needed to train the model. Use boosting which uses similar concepts than random forest but uses weak predictors and weigh them based on their accuracy to get similar results with simple trees rather than making complex trees.
+Using 10-fold cross validation was used with default options.
+
+```{r, results='hide'}
+set.seed(50)
+gbmModel <- train(classe ~ ., data=train1, method="gbm", trControl=trainControl(method="cv"))
+```
+
+```{r}
+plot(gbmModel)
+```
+
+```{r, results='hide'}
+gbmTrainPred <- predict(gbmModel, newdata=train1)
+gbmTestPred <- predict(gbmModel, newdata=test1)
+gbmTrainingConfusion <- confusionMatrix(train1$classe, gbmTrainPred)
+gbmTrainingConfusion$overall[1] #Accuracy : 0.9987262
+gbmTestingConfusion <- confusionMatrix(test1$classe, gbmTestPred)
+gbmTestingConfusion$overall[1] #Accuracy : 0.9949019
+```
+
+```{r}
+print(gbmTestingConfusion$table)
+```
+
+From above results, it is seen that in-sample error accuracy is 99.87% and out-sample error accuracy is 99.47%. There were more errors and the performance deteriorated a little as compared to random forest. It found 3 times better in terms of time but marginally worse in term of accuracy.
+
+###Method 5 :  Fitting Parallel random forest
+
+parallelRandomForest is 6 times faster algorithm even when not running in parallel, and the memory consumption is about 16 times lower. Importantly, the algorithm is unchanged, i.e. parallelRandomForest produces the same output as randomForest.
+
+```{r, results='hide'}
+class <- train1$classe
+data  <- train1[-ncol(train1)]
+#Register multi-core backend
+registerDoParallel()
+rf <- train(data, class, method="parRF", tuneGrid=data.frame(mtry=3), trControl=trainControl(method="none"))
+```
+```{r}
+plot(varImp(rf))
+
+```
+```{r, results='hide'}
+trainPredictions <- predict(rf, newdata=train1)
+confMatrix1 <- confusionMatrix(trainPredictions,train1$classe)
+confMatrix1$overall[1] #Accuracy = 1
+testPredictions <- predict(rf, newdata=test1)
+confMatrix <- confusionMatrix(testPredictions,test1$classe)
+confMatrix$overall[1] #Accuracy = 0.99745
+```
+```{r}
+print(confMatrix$table)
+```
+
+From above results, it is seen that in-sample error accuracy is 100% and out-sample error accuracy is 99.74%.
+
+##Conclusion
+rPart was not able to give any good accuracy. Random forest was great in accuracy but was slow to train. Finally gbm(generalize boosting regression model) was a little less accurate but faster. parallelRandomForest is 6 times faster algorithm even when not running in parallel, and the memory consumption is about 16 times lower. I used 10-fold cross validation but it can be improvements made by using repeated cross-validation but due to shortage of time i have not used k-fold repeated cross validation but the results are still accurate for k-fold cross-validaiton. So i predicted the final answer for the test cases using the parallelRandomForest model which gave 100% accuracy on the prediction part of the project and faster also.
+
+
+### Testing of test data set with 20 records with parallel random forest algorithm.
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+answers <- predict(rf, test)
+pml_write_files(answers)
+```
+
+
+
